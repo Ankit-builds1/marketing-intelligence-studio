@@ -1,0 +1,20 @@
+pandas>=2.0
+numpy>=1.24
+matplotlib>=3.7
+seaborn>=0.12
+scipy>=1.11
+scikit-learn>=1.3
+statsmodels>=0.14
+networkx>=3.0
+streamlit>=1.30
+plotly>=5.18
+jupyter>=1.0
+ipykernel>=6.25
+requests>=2.31
+joblib>=1.3
+pyreadr>=0.5
+
+# Causal-inference libs (Python 3.13 or lower required)
+dowhy>=0.11
+econml>=0.15
+shap>=0.43

@@ -1,0 +1,25 @@
+__pycache__/
+*.pyc
+*.pyo
+venv/
+.venv/
+.ipynb_checkpoints/
+.DS_Store
+.idea/
+.vscode/
+*.egg-info/
+dist/
+build/
+.worktrees/
+streamlit.out.log
+streamlit.err.log
+
+# Model artifacts (reproducible by running the notebook)
+models/*.pkl
+
+# Datasets (reproducible: simulated regenerates, Robyn redownloads)
+# Uncomment if you do NOT want to commit data
+# data/*.csv
+
+# Kaggle credentials
+kaggle.json
