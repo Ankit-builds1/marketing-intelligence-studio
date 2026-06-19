@@ -1,5 +1,6 @@
 import copy
 
+import numpy as np
 import pytest
 
 from src.budget_optimizer import BudgetResult, optimize_allocation
@@ -40,7 +41,7 @@ def test_optimizer_rejects_infeasible_minimum_bounds():
     assert "minimum" in result.message.lower()
     assert result.optimal_allocation == {}
     assert result.current_prediction == 50.0
-    assert result.optimal_prediction == 0.0
+    assert np.isnan(result.optimal_prediction)
 
 
 def test_optimizer_rejects_infeasible_maximum_bounds():
@@ -84,3 +85,56 @@ def test_optimizer_returns_clear_failure_for_nonpositive_budget():
     assert not result.success
     assert "positive" in result.message.lower()
     assert result.optimal_allocation == {}
+
+
+@pytest.mark.parametrize(
+    "total_budget,bounds,current,message_snippet",
+    [
+        (np.nan, {"a": (0.0, 10.0)}, {"a": 1.0}, "total budget"),
+        (10.0, {"a": (np.nan, 10.0)}, {"a": 1.0}, "finite"),
+        (10.0, {"a": (-1.0, 10.0)}, {"a": 1.0}, "nonnegative"),
+        (10.0, {"a": (10.0, 5.0)}, {"a": 1.0}, "lower"),
+        (10.0, {"a": (0.0, 10.0)}, {"a": np.nan}, "current"),
+    ],
+)
+def test_optimizer_rejects_nonfinite_inputs_with_clear_messages(total_budget, bounds, current, message_snippet):
+    response = {"a": lambda x: x}
+
+    result = optimize_allocation(response, total_budget, bounds, current)
+
+    assert not result.success
+    assert message_snippet in result.message.lower()
+    assert np.isnan(result.optimal_prediction)
+
+
+def test_optimizer_rejects_nonfinite_response_outputs():
+    response = {"a": lambda x: np.nan if x > 0 else 0.0}
+
+    result = optimize_allocation(response, 10.0, {"a": (0.0, 10.0)}, {"a": 1.0})
+
+    assert not result.success
+    assert "response" in result.message.lower()
+    assert np.isnan(result.optimal_prediction)
+    assert np.isnan(result.current_prediction)
+
+
+def test_optimizer_rejects_solver_success_when_solution_is_infeasible(monkeypatch):
+    class FakeResult:
+        success = True
+        message = "mocked success"
+        x = np.array([12.0, -2.0], dtype=float)
+
+    def fake_minimize(*args, **kwargs):
+        return FakeResult()
+
+    monkeypatch.setattr("src.budget_optimizer.minimize", fake_minimize)
+
+    response = {"search": lambda x: x, "social": lambda x: x}
+    bounds = {"search": (0.0, 10.0), "social": (0.0, 10.0)}
+
+    result = optimize_allocation(response, 10.0, bounds, {"search": 5.0, "social": 5.0})
+
+    assert not result.success
+    assert "solver" in result.message.lower() or "feasible" in result.message.lower() or "bound" in result.message.lower()
+    assert np.isnan(result.optimal_prediction)
+    assert np.isfinite(result.current_prediction)
