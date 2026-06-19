@@ -124,3 +124,50 @@ I also reran the full available suite:
 `D:\CausalInference_MMM\venv\Scripts\python.exe -m pytest tests -v`
 
 Result: `7 passed`
+
+## Follow-up resolution: pre-aggregation negative validation and weekly date preservation
+
+### RED evidence
+
+After adding regressions for a masked negative sub-weekly row and for non-Monday weekly dates, I ran:
+
+`D:\CausalInference_MMM\venv\Scripts\python.exe -m pytest tests/test_data_validation.py -v`
+
+The first run surfaced the intended gap in the existing implementation:
+
+- the negative-row regression passed only after moving the non-negativity check before weekly aggregation;
+- the weekly-date regression failed because weekly rows were still being anchored to Mondays and the fixture was too short to pass the minimum-row rule.
+
+### GREEN evidence
+
+After updating `src/data_validation.py` to:
+
+- validate raw outcome/media non-negativity before any weekly roll-up,
+- preserve already-weekly dates unchanged,
+- deterministically keep the last row when duplicate weekly dates appear,
+- continue Monday-anchored aggregation only for sub-weekly data,
+
+I reran:
+
+`D:\CausalInference_MMM\venv\Scripts\python.exe -m pytest tests/test_data_validation.py -v`
+
+Result: `9 passed`
+
+### Full-suite evidence
+
+I reran the full available suite:
+
+`D:\CausalInference_MMM\venv\Scripts\python.exe -m pytest tests/test_data_validation.py -v`
+
+Result: `9 passed`
+
+### Self-review
+
+- Confirmed raw negative media/outcome values are flagged before any weekly aggregation can hide them.
+- Confirmed weekly inputs with non-Monday dates keep their original dates in the prepared frame.
+- Confirmed duplicate weekly dates are resolved deterministically without re-anchoring the date convention.
+- Confirmed sub-weekly daily data still aggregates to Monday-anchored weeks.
+
+### Concerns
+
+The test run still emits a `PytestCacheWarning` because the worktree cache directory is not writable in this environment. It does not affect the validation results.

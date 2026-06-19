@@ -136,12 +136,33 @@ def prepare_and_validate(
                 )
             )
 
+    if (frame[mapping.outcome_col] < 0).any():
+        issues.append(
+            ValidationIssue(
+                "error",
+                "negative_outcome",
+                "Outcome values must be non-negative.",
+            )
+        )
+
+    if (frame[list(mapping.channel_cols)] < 0).any().any():
+        issues.append(
+            ValidationIssue(
+                "error",
+                "negative_media",
+                "Media spend values must be non-negative.",
+            )
+        )
+
     frame = frame.dropna(subset=[mapping.date_col, mapping.outcome_col, *mapping.channel_cols])
-    frame = frame.sort_values(mapping.date_col)
+    frame["_source_order"] = np.arange(len(frame))
+    frame = frame.sort_values([mapping.date_col, "_source_order"])
 
     cadence = _cadence_kind(frame[mapping.date_col])
-    if cadence in {"weekly", "subweekly"}:
+    if cadence == "subweekly":
         frame = _aggregate_to_weekly(frame, mapping)
+    elif cadence == "weekly":
+        frame = frame.drop_duplicates(subset=[mapping.date_col], keep="last")
     elif cadence == "irregular":
         issues.append(
             ValidationIssue(
@@ -166,24 +187,6 @@ def prepare_and_validate(
                 "warning",
                 "limited_history",
                 "Two years of weekly history is recommended.",
-            )
-        )
-
-    if (frame[mapping.outcome_col] < 0).any():
-        issues.append(
-            ValidationIssue(
-                "error",
-                "negative_outcome",
-                "Outcome values must be non-negative.",
-            )
-        )
-
-    if (frame[list(mapping.channel_cols)] < 0).any().any():
-        issues.append(
-            ValidationIssue(
-                "error",
-                "negative_media",
-                "Media spend values must be non-negative.",
             )
         )
 
@@ -220,6 +223,7 @@ def prepare_and_validate(
     }
     rename.update({name: f"media__{name}" for name in mapping.channel_cols})
     rename.update({name: f"control__{name}" for name in mapping.control_cols})
+    frame = frame.drop(columns=["_source_order"], errors="ignore")
     frame = frame.rename(columns=rename).reset_index(drop=True)
 
     return PreparedData(frame, mapping, issues)

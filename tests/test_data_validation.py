@@ -155,14 +155,59 @@ def test_blocks_monthly_and_irregular_cadence():
     assert "irregular_cadence" in {issue.code for issue in irregular_result.issues}
 
 
-def test_aggregates_multiple_rows_sharing_same_date_into_one_week():
+def test_preserves_weekly_dates_and_resolves_duplicate_rows_deterministically():
     mapping = DataMapping("day", "sales", ("search", "social"), ("price",))
     result = prepare_and_validate(duplicate_date_frame(), mapping)
 
     assert result.can_train
     assert len(result.frame) == 52
-    assert result.frame.loc[0, "date"] == pd.Timestamp("2024-01-01")
-    assert result.frame.loc[0, "outcome"] == 203
-    assert result.frame.loc[0, "media__search"] == 23
-    assert result.frame.loc[0, "media__social"] == 43
-    assert result.frame.loc[0, "control__price"] == 2.0
+    assert result.frame.loc[0, "date"] == pd.Timestamp("2024-01-02")
+    assert result.frame.loc[0, "outcome"] == 102
+    assert result.frame.loc[0, "media__search"] == 12
+    assert result.frame.loc[0, "media__social"] == 22
+    assert result.frame.loc[0, "control__price"] == 3.0
+
+
+def test_blocks_negative_subweekly_rows_even_if_weekly_sum_would_be_positive():
+    frame = pd.DataFrame(
+        {
+            "day": pd.to_datetime(
+                [
+                    "2024-01-01",
+                    "2024-01-02",
+                    "2024-01-03",
+                    "2024-01-04",
+                    "2024-01-05",
+                    "2024-01-06",
+                    "2024-01-07",
+                ]
+            ),
+            "sales": [100, 101, 102, 103, 104, 105, 106],
+            "search": [10, 11, -100, 13, 14, 15, 16],
+            "social": [20, 21, 22, 23, 24, 25, 26],
+        }
+    )
+    mapping = DataMapping("day", "sales", ("search", "social"), ())
+
+    result = prepare_and_validate(frame, mapping)
+
+    assert not result.can_train
+    assert "negative_media" in {issue.code for issue in result.issues}
+
+
+def test_preserves_non_monday_weekly_dates_without_reanchoring():
+    weeks = pd.date_range("2024-01-03", periods=52, freq="W-WED")
+    frame = pd.DataFrame(
+        {
+            "week": weeks,
+            "sales": range(100, 152),
+            "search": range(10, 62),
+            "social": range(20, 72),
+        }
+    )
+    mapping = DataMapping("week", "sales", ("search", "social"), ())
+
+    result = prepare_and_validate(frame, mapping)
+
+    assert result.can_train
+    assert list(result.frame["date"]) == list(frame["week"])
