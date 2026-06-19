@@ -8,8 +8,20 @@ def valid_frame(rows: int = 104) -> pd.DataFrame:
         {
             "week": pd.date_range("2024-01-01", periods=rows, freq="W-MON"),
             "sales": range(100, 100 + rows),
-            "search": range(10, 10 + rows),
-            "social": range(20, 20 + rows),
+            "search": [10 + (i % 13) for i in range(rows)],
+            "social": [20 + ((i * 7) % 19) for i in range(rows)],
+            "price": [1.0 + i / 1000 for i in range(rows)],
+        }
+    )
+
+
+def daily_frame(rows: int = 364) -> pd.DataFrame:
+    return pd.DataFrame(
+        {
+            "day": pd.date_range("2024-01-01", periods=rows, freq="D"),
+            "sales": range(100, 100 + rows),
+            "search": [10 + i for i in range(rows)],
+            "social": [20 + (i * 2) + (i % 5) for i in range(rows)],
             "price": [1.0 + i / 1000 for i in range(rows)],
         }
     )
@@ -49,3 +61,70 @@ def test_warns_about_near_duplicate_channels():
     result = prepare_and_validate(frame, mapping)
 
     assert "high_collinearity" in {issue.code for issue in result.issues}
+
+
+def test_aggregates_daily_data_to_weekly_and_is_trainable_at_52_weeks():
+    mapping = DataMapping("day", "sales", ("search", "social"), ("price",))
+    result = prepare_and_validate(daily_frame(), mapping)
+
+    assert result.can_train
+    assert len(result.frame) == 52
+    assert list(result.frame.columns) == [
+        "date",
+        "outcome",
+        "media__search",
+        "media__social",
+        "control__price",
+    ]
+    assert result.frame.loc[0, "date"] == pd.Timestamp("2024-01-01")
+    assert result.frame.loc[0, "outcome"] == sum(range(100, 107))
+    assert result.frame.loc[0, "media__search"] == sum(10 + i for i in range(7))
+    assert result.frame.loc[0, "media__social"] == sum(20 + (i * 2) + (i % 5) for i in range(7))
+
+
+def test_blocks_daily_data_with_fewer_than_52_resulting_weeks():
+    mapping = DataMapping("day", "sales", ("search", "social"), ())
+    result = prepare_and_validate(daily_frame(357), mapping)
+
+    assert not result.can_train
+    assert "too_few_rows" in {issue.code for issue in result.issues}
+
+
+def test_blocks_monthly_and_irregular_cadence():
+    monthly = pd.DataFrame(
+        {
+            "month": pd.date_range("2024-01-01", periods=12, freq="MS"),
+            "sales": range(100, 112),
+            "search": [10 + i for i in range(12)],
+            "social": [20 + ((i * 3) % 9) for i in range(12)],
+        }
+    )
+    irregular = pd.DataFrame(
+        {
+            "date": pd.to_datetime(
+                [
+                    "2024-01-01",
+                    "2024-01-03",
+                    "2024-01-08",
+                    "2024-01-22",
+                    "2024-02-05",
+                    "2024-02-06",
+                ]
+            ),
+            "sales": [100, 101, 102, 103, 104, 105],
+            "search": [10, 11, 12, 13, 14, 15],
+            "social": [20, 21, 22, 23, 24, 25],
+        }
+    )
+
+    monthly_result = prepare_and_validate(
+        monthly, DataMapping("month", "sales", ("search", "social"), ())
+    )
+    irregular_result = prepare_and_validate(
+        irregular, DataMapping("date", "sales", ("search", "social"), ())
+    )
+
+    assert not monthly_result.can_train
+    assert not irregular_result.can_train
+    assert "irregular_cadence" in {issue.code for issue in monthly_result.issues}
+    assert "irregular_cadence" in {issue.code for issue in irregular_result.issues}

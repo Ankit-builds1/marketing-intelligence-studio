@@ -30,6 +30,43 @@ class PreparedData:
         return not any(issue.severity == "error" for issue in self.issues)
 
 
+def _cadence_kind(dates: pd.Series) -> str:
+    unique_dates = dates.sort_values().drop_duplicates()
+    if len(unique_dates) < 2:
+        return "weekly"
+
+    gaps = unique_dates.diff().dt.days.dropna()
+    if gaps.empty:
+        return "weekly"
+
+    median_gap = gaps.median()
+    min_gap = gaps.min()
+    max_gap = gaps.max()
+
+    if max_gap <= 7 and median_gap < 7:
+        return "subweekly"
+
+    if 5 <= min_gap and max_gap <= 9 and 5 <= median_gap <= 9:
+        return "weekly"
+
+    return "irregular"
+
+
+def _week_start(date_series: pd.Series) -> pd.Series:
+    return date_series.dt.normalize() - pd.to_timedelta(date_series.dt.weekday, unit="D")
+
+
+def _aggregate_to_weekly(frame: pd.DataFrame, mapping: DataMapping) -> pd.DataFrame:
+    grouped = frame.copy()
+    grouped["_week_start"] = _week_start(grouped[mapping.date_col])
+    agg_spec: dict[str, str] = {mapping.outcome_col: "sum"}
+    agg_spec.update({name: "sum" for name in mapping.channel_cols})
+    agg_spec.update({name: "mean" for name in mapping.control_cols})
+
+    weekly = grouped.groupby("_week_start", as_index=False).agg(agg_spec)
+    return weekly.rename(columns={"_week_start": mapping.date_col})
+
+
 def prepare_and_validate(
     raw: pd.DataFrame, mapping: DataMapping, min_rows: int = 52
 ) -> PreparedData:
@@ -102,6 +139,19 @@ def prepare_and_validate(
     frame = frame.dropna(subset=[mapping.date_col, mapping.outcome_col, *mapping.channel_cols])
     frame = frame.sort_values(mapping.date_col).drop_duplicates(mapping.date_col, keep="last")
 
+    cadence = _cadence_kind(frame[mapping.date_col])
+    if cadence == "subweekly":
+        frame = _aggregate_to_weekly(frame, mapping)
+    elif cadence == "irregular":
+        issues.append(
+            ValidationIssue(
+                "error",
+                "irregular_cadence",
+                "Cadence cannot be reliably converted to weekly periods.",
+            )
+        )
+        return PreparedData(pd.DataFrame(), mapping, issues)
+
     if len(frame) < min_rows:
         issues.append(
             ValidationIssue(
@@ -150,17 +200,6 @@ def prepare_and_validate(
                 f"Columns need variation: {', '.join(constant)}",
             )
         )
-
-    if len(frame) > 1:
-        median_gap = frame[mapping.date_col].diff().dt.days.dropna().median()
-        if not 5 <= median_gap <= 9:
-            issues.append(
-                ValidationIssue(
-                    "warning",
-                    "non_weekly_dates",
-                    "Dates do not appear to be consistently weekly.",
-                )
-            )
 
     if len(mapping.channel_cols) >= 2 and len(frame) > 1:
         media_corr = frame[list(mapping.channel_cols)].corr().abs()

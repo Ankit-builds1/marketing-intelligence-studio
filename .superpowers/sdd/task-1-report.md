@@ -61,3 +61,40 @@ Result: `3 passed`
 ## Concerns
 
 None for the scoped task. The only environment issue encountered was that `pytest` was not initially installed in the target venv, so it was installed there to run the required verification commands.
+
+## Follow-up resolution: weekly aggregation and cadence blocking
+
+### RED evidence
+
+After adding the regression tests for daily, monthly, and irregular cadence handling, I ran:
+
+`D:\CausalInference_MMM\venv\Scripts\python.exe -m pytest tests/test_data_validation.py -v`
+
+Initial failure showed the previous implementation did not aggregate daily data to weekly periods or block non-convertible cadence:
+
+- daily data stayed at 364 rows instead of 52 weekly rows;
+- 357 daily rows remained trainable instead of failing the 52-row post-aggregation check;
+- monthly/irregular cadence was not rejected with the required error.
+
+### GREEN evidence
+
+After updating `src/data_validation.py` to:
+
+- aggregate sub-weekly data into Monday-anchored weekly rows,
+- sum outcome/media and average controls,
+- apply the minimum-row rule after weekly preparation,
+- block monthly/irregular cadence with `irregular_cadence`,
+
+I reran:
+
+`D:\CausalInference_MMM\venv\Scripts\python.exe -m pytest tests/test_data_validation.py -v`
+
+Result: `6 passed`
+
+### Full-suite evidence
+
+I also reran the full available suite:
+
+`D:\CausalInference_MMM\venv\Scripts\python.exe -m pytest tests -v`
+
+Result: `6 passed`
