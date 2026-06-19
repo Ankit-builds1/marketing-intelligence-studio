@@ -98,3 +98,29 @@ I also reran the full available suite:
 `D:\CausalInference_MMM\venv\Scripts\python.exe -m pytest tests -v`
 
 Result: `6 passed`
+
+## Follow-up resolution: repeated same-day rows are preserved through weekly aggregation
+
+### RED evidence
+
+After adding the regression test for multiple observations sharing the same date, I ran:
+
+`D:\CausalInference_MMM\venv\Scripts\python.exe -m pytest tests/test_data_validation.py -v`
+
+The new test failed because the implementation still lost same-day rows before weekly aggregation, which meant the Monday-anchored weekly result did not preserve all outcome and media values.
+
+### GREEN evidence
+
+After removing the pre-aggregation duplicate-date drop and routing both weekly and sub-weekly accepted cadences through the weekly aggregator, I reran:
+
+`D:\CausalInference_MMM\venv\Scripts\python.exe -m pytest tests/test_data_validation.py -v`
+
+Result: `7 passed`
+
+### Full-suite evidence
+
+I also reran the full available suite:
+
+`D:\CausalInference_MMM\venv\Scripts\python.exe -m pytest tests -v`
+
+Result: `7 passed`

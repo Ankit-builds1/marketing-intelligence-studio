@@ -27,6 +27,31 @@ def daily_frame(rows: int = 364) -> pd.DataFrame:
     )
 
 
+def duplicate_date_frame() -> pd.DataFrame:
+    rows = []
+    for week in range(52):
+        day = pd.Timestamp("2024-01-01") + pd.Timedelta(days=week * 7 + 1)
+        rows.append(
+            {
+                "day": day,
+                "sales": 100 + week * 10 + 1,
+                "search": 10 + week * 2 + 1,
+                "social": 20 + week * 3 + 1,
+                "price": 1.0 + week / 100,
+            }
+        )
+        rows.append(
+            {
+                "day": day,
+                "sales": 100 + week * 10 + 2,
+                "search": 10 + week * 2 + 2,
+                "social": 20 + week * 3 + 2,
+                "price": 3.0 + week / 100,
+            }
+        )
+    return pd.DataFrame(rows)
+
+
 def test_prepares_canonical_weekly_frame():
     mapping = DataMapping("week", "sales", ("search", "social"), ("price",))
     result = prepare_and_validate(valid_frame(), mapping)
@@ -128,3 +153,16 @@ def test_blocks_monthly_and_irregular_cadence():
     assert not irregular_result.can_train
     assert "irregular_cadence" in {issue.code for issue in monthly_result.issues}
     assert "irregular_cadence" in {issue.code for issue in irregular_result.issues}
+
+
+def test_aggregates_multiple_rows_sharing_same_date_into_one_week():
+    mapping = DataMapping("day", "sales", ("search", "social"), ("price",))
+    result = prepare_and_validate(duplicate_date_frame(), mapping)
+
+    assert result.can_train
+    assert len(result.frame) == 52
+    assert result.frame.loc[0, "date"] == pd.Timestamp("2024-01-01")
+    assert result.frame.loc[0, "outcome"] == 203
+    assert result.frame.loc[0, "media__search"] == 23
+    assert result.frame.loc[0, "media__social"] == 43
+    assert result.frame.loc[0, "control__price"] == 2.0

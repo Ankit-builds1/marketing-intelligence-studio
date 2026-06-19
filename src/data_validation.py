@@ -137,10 +137,10 @@ def prepare_and_validate(
             )
 
     frame = frame.dropna(subset=[mapping.date_col, mapping.outcome_col, *mapping.channel_cols])
-    frame = frame.sort_values(mapping.date_col).drop_duplicates(mapping.date_col, keep="last")
+    frame = frame.sort_values(mapping.date_col)
 
     cadence = _cadence_kind(frame[mapping.date_col])
-    if cadence == "subweekly":
+    if cadence in {"weekly", "subweekly"}:
         frame = _aggregate_to_weekly(frame, mapping)
     elif cadence == "irregular":
         issues.append(
