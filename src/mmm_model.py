@@ -8,7 +8,7 @@ from scipy.optimize import lsq_linear
 from sklearn.metrics import mean_absolute_error, r2_score
 from sklearn.preprocessing import StandardScaler
 
-from src.transformations import FeatureSet, geometric_adstock, hill_saturation
+from src.transformations import FeatureSet, hill_saturation
 
 
 @dataclass(frozen=True)
@@ -125,10 +125,7 @@ def _steady_state_adstock(spend: float, decay: float) -> float:
         return 0.0
     if decay == 0.0:
         return float(spend)
-
-    warmup_periods = max(52, int(np.ceil(np.log(1e-6) / np.log(decay))))
-    repeated_spend = np.full(warmup_periods, spend, dtype=float)
-    return float(geometric_adstock(repeated_spend, decay)[-1])
+    return float(spend / (1.0 - decay))
 
 
 def _business_contribution_total(

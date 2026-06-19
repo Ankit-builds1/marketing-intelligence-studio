@@ -1,7 +1,7 @@
 import numpy as np
 import pandas as pd
 
-from src.transformations import ChannelTransform, build_feature_set, geometric_adstock, hill_saturation
+from src.transformations import ChannelTransform, build_feature_set, hill_saturation
 
 
 def _make_frame(rows: int, seed: int, *, include_social_effect: bool = True, corrupt_holdout: bool = False) -> tuple[pd.DataFrame, dict[str, ChannelTransform]]:
@@ -143,8 +143,7 @@ def test_response_curves_use_steady_state_adstock_before_saturation():
     curve = result.response_curves["search"]
     spend = float(curve["spend"].iloc[-1])
     transform = params["search"]
-    warmup = max(52, int(np.ceil(np.log(1e-6) / np.log(transform.decay))))
-    steady_state_adstock = geometric_adstock(np.full(warmup, spend), transform.decay)[-1]
+    steady_state_adstock = spend / (1.0 - transform.decay)
     expected_feature = hill_saturation(
         np.array([steady_state_adstock]),
         transform.half_saturation,
@@ -156,3 +155,35 @@ def test_response_curves_use_steady_state_adstock_before_saturation():
     expected_incremental_outcome = (expected_feature / scale) * coefficient
 
     assert np.isclose(curve["incremental_outcome"].iloc[-1], expected_incremental_outcome)
+
+
+def test_response_curves_remain_finite_for_near_unity_decay():
+    from src.mmm_model import MMMConfig, fit_mmm
+
+    frame, params = _make_frame(rows=120, seed=23, include_social_effect=True)
+    params["search"] = ChannelTransform(0.999999, 40.0, 1.0)
+    params["social"] = ChannelTransform(0.1, 30.0, 1.0)
+    features = build_feature_set(frame, params)
+
+    result = fit_mmm(features, MMMConfig(bootstrap_samples=6, random_state=23))
+    curve = result.response_curves["search"]
+    transform = params["search"]
+    spend = float(curve["spend"].iloc[-1])
+    steady_state_adstock = spend / (1.0 - transform.decay)
+    feature_column = features.channel_feature_names["search"]
+    scale = result.scaler.scale_[result.feature_columns.index(feature_column)]
+    coefficient = float(result.coefficients[feature_column])
+    expected_incremental_outcome = (
+        hill_saturation(
+            np.array([steady_state_adstock]),
+            transform.half_saturation,
+            transform.slope,
+        )[0]
+        / scale
+    ) * coefficient
+
+    assert len(curve) == 50
+    assert np.isfinite(curve["spend"]).all()
+    assert np.isfinite(curve["incremental_outcome"]).all()
+    assert np.isclose(curve["incremental_outcome"].iloc[-1], expected_incremental_outcome)
+    assert curve["incremental_outcome"].max() <= coefficient / scale + 1e-12

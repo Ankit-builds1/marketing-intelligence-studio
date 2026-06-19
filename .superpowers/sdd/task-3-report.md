@@ -114,3 +114,34 @@ Result:
 
 - Completed successfully
 - Ended with `SUCCESS - all checks passed.`
+
+## Task 3 bounded steady-state fix verification
+
+### RED
+
+Command:
+
+`D:\CausalInference_MMM\venv\Scripts\python.exe -m pytest tests\test_mmm_model.py -k near_unity_decay -v -p no:cacheprovider`
+
+Result:
+
+- The test session timed out while executing `test_response_curves_remain_finite_for_near_unity_decay`
+- This exposed the unbounded warm-up allocation path in the prior implementation.
+
+### GREEN
+
+Command:
+
+`D:\CausalInference_MMM\venv\Scripts\python.exe -m pytest tests\test_mmm_model.py -v -p no:cacheprovider`
+
+Result:
+
+- `6 passed`
+
+Command:
+
+`D:\CausalInference_MMM\venv\Scripts\python.exe -m pytest tests -v -p no:cacheprovider`
+
+Result:
+
+- `18 passed in 3.21s`
