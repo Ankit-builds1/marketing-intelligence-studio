@@ -1,7 +1,7 @@
 import numpy as np
 import pandas as pd
 
-from src.transformations import ChannelTransform, build_feature_set
+from src.transformations import ChannelTransform, build_feature_set, geometric_adstock, hill_saturation
 
 
 def _make_frame(rows: int, seed: int, *, include_social_effect: bool = True, corrupt_holdout: bool = False) -> tuple[pd.DataFrame, dict[str, ChannelTransform]]:
@@ -49,6 +49,7 @@ def test_model_produces_holdout_metrics_reconciled_components_and_response_curve
 
     assert result.metrics.holdout_rows == 24
     assert result.metrics.r_squared > 0.7
+    assert np.isfinite(result.metrics.r_squared)
     assert np.isfinite(result.metrics.mae)
     assert result.metrics.mape is not None
     assert tuple(result.feature_columns) == tuple(features.X.columns)
@@ -84,6 +85,16 @@ def test_model_produces_holdout_metrics_reconciled_components_and_response_curve
     )
 
 
+def test_fit_mmm_rejects_inputs_without_two_holdout_rows():
+    from src.mmm_model import MMMConfig, fit_mmm
+
+    frame, params = _make_frame(rows=2, seed=5)
+    features = build_feature_set(frame, params)
+
+    with np.testing.assert_raises_regex(ValueError, "at least 3 rows"):
+        fit_mmm(features, MMMConfig())
+
+
 def test_fit_mmm_emits_deterministic_warnings_for_zero_mape_negative_holdout_and_unstable_intervals():
     from src.mmm_model import MMMConfig, fit_mmm
 
@@ -103,3 +114,45 @@ def test_fit_mmm_emits_deterministic_warnings_for_zero_mape_negative_holdout_and
     assert any("interval" in warning.lower() for warning in first.warnings)
     pd.testing.assert_frame_equal(first.channel_summary, second.channel_summary)
     assert first.warnings == second.warnings
+
+
+def test_bootstrap_indices_do_not_wrap_at_series_end():
+    from src.mmm_model import _moving_block_bootstrap_indices
+
+    class DummyRng:
+        def __init__(self, starts: list[int]) -> None:
+            self._starts = iter(starts)
+
+        def integers(self, low: int, high: int) -> int:
+            return next(self._starts)
+
+    indices = _moving_block_bootstrap_indices(5, DummyRng([3, 4, 1]))
+
+    assert indices.tolist() == [3, 4, 4, 1, 2]
+
+
+def test_response_curves_use_steady_state_adstock_before_saturation():
+    from src.mmm_model import MMMConfig, fit_mmm
+
+    frame, params = _make_frame(rows=120, seed=19, include_social_effect=True)
+    params["search"] = ChannelTransform(0.9, 50.0, 1.0)
+    params["social"] = ChannelTransform(0.1, 30.0, 1.0)
+    features = build_feature_set(frame, params)
+
+    result = fit_mmm(features, MMMConfig(bootstrap_samples=8, random_state=19))
+    curve = result.response_curves["search"]
+    spend = float(curve["spend"].iloc[-1])
+    transform = params["search"]
+    warmup = max(52, int(np.ceil(np.log(1e-6) / np.log(transform.decay))))
+    steady_state_adstock = geometric_adstock(np.full(warmup, spend), transform.decay)[-1]
+    expected_feature = hill_saturation(
+        np.array([steady_state_adstock]),
+        transform.half_saturation,
+        transform.slope,
+    )[0]
+    feature_column = features.channel_feature_names["search"]
+    scale = result.scaler.scale_[result.feature_columns.index(feature_column)]
+    coefficient = float(result.coefficients[feature_column])
+    expected_incremental_outcome = (expected_feature / scale) * coefficient
+
+    assert np.isclose(curve["incremental_outcome"].iloc[-1], expected_incremental_outcome)

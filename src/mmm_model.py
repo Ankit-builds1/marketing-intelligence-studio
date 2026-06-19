@@ -8,7 +8,7 @@ from scipy.optimize import lsq_linear
 from sklearn.metrics import mean_absolute_error, r2_score
 from sklearn.preprocessing import StandardScaler
 
-from src.transformations import FeatureSet, hill_saturation
+from src.transformations import FeatureSet, geometric_adstock, hill_saturation
 
 
 @dataclass(frozen=True)
@@ -84,8 +84,8 @@ def _fit_constrained(
 
 
 def _resolve_holdout_rows(row_count: int, holdout_fraction: float) -> int:
-    if row_count < 2:
-        raise ValueError("fit_mmm requires at least two rows")
+    if row_count < 3:
+        raise ValueError("fit_mmm requires at least 3 rows to reserve 1 training row and 2 holdout rows")
 
     requested = max(8, round(row_count * holdout_fraction))
     return min(max(requested, 1), row_count - 1)
@@ -115,9 +115,20 @@ def _moving_block_bootstrap_indices(row_count: int, rng: np.random.Generator) ->
     positions: list[int] = []
     while len(positions) < row_count:
         start = int(rng.integers(0, row_count))
-        block = (start + np.arange(block_length, dtype=int)) % row_count
-        positions.extend(block.tolist())
+        stop = min(start + block_length, row_count)
+        positions.extend(range(start, stop))
     return np.asarray(positions[:row_count], dtype=int)
+
+
+def _steady_state_adstock(spend: float, decay: float) -> float:
+    if spend <= 0.0:
+        return 0.0
+    if decay == 0.0:
+        return float(spend)
+
+    warmup_periods = max(52, int(np.ceil(np.log(1e-6) / np.log(decay))))
+    repeated_spend = np.full(warmup_periods, spend, dtype=float)
+    return float(geometric_adstock(repeated_spend, decay)[-1])
 
 
 def _business_contribution_total(
@@ -143,7 +154,17 @@ def _build_response_curves(
         transform = features.transforms[channel]
         max_spend = float(features.original_media[channel].max()) if len(features.original_media) else 0.0
         spend = np.linspace(0.0, max_spend * 1.5, 50, dtype=float)
-        transformed_spend = hill_saturation(spend, transform.half_saturation, transform.slope)
+        transformed_spend = np.array(
+            [
+                hill_saturation(
+                    np.array([_steady_state_adstock(value, transform.decay)], dtype=float),
+                    transform.half_saturation,
+                    transform.slope,
+                )[0]
+                for value in spend
+            ],
+            dtype=float,
+        )
         scale = float(scaler.scale_[feature_columns.index(feature_column)])
         incremental_outcome = (transformed_spend / scale) * float(coefficients[feature_column])
         curves[channel] = pd.DataFrame(
@@ -223,6 +244,8 @@ def fit_mmm(features: FeatureSet, config: MMMConfig) -> MMMResult:
 
     warnings: list[str] = []
     holdout_r_squared = float(r2_score(holdout_y, holdout_predictions))
+    if not np.isfinite(holdout_r_squared):
+        raise ValueError("Holdout R^2 must be finite; provide enough varied holdout rows.")
     holdout_mae = float(mean_absolute_error(holdout_y, holdout_predictions))
     holdout_mape: float | None
     if (holdout_y == 0).any():

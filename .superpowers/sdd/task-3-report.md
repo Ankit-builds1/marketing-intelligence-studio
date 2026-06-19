@@ -71,3 +71,46 @@ Result:
 ## Concerns
 
 - The legacy smoke test passes, but it is slow in this environment (about 250 seconds), so future verification should budget for that runtime.
+
+## Task 3 review-fix verification
+
+### RED
+
+Command:
+
+`D:\CausalInference_MMM\venv\Scripts\python.exe -m pytest tests\test_mmm_model.py -v -p no:cacheprovider`
+
+Result:
+
+- `3 failed`
+- Failures covered the three review findings:
+  - insufficient-row rejection was missing,
+  - moving-block bootstrap still wrapped at the series end,
+  - response curves still ignored steady-state adstock.
+
+### GREEN
+
+Command:
+
+`D:\CausalInference_MMM\venv\Scripts\python.exe -m pytest tests\test_mmm_model.py -v -p no:cacheprovider`
+
+Result:
+
+- `5 passed`
+
+Command:
+
+`D:\CausalInference_MMM\venv\Scripts\python.exe -m pytest tests -v -p no:cacheprovider`
+
+Result:
+
+- `17 passed in 1.90s`
+
+Command:
+
+`D:\CausalInference_MMM\venv\Scripts\python.exe src\smoke_test.py`
+
+Result:
+
+- Completed successfully
+- Ended with `SUCCESS - all checks passed.`
