@@ -1,6 +1,7 @@
 __pycache__/
 *.pyc
 *.pyo
+*.log
 venv/
 .venv/
 .ipynb_checkpoints/
@@ -11,8 +12,13 @@ venv/
 dist/
 build/
 .worktrees/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.cache/
 streamlit.out.log
 streamlit.err.log
+.streamlit/secrets.toml
 
 # Model artifacts (reproducible by running the notebook)
 models/*.pkl

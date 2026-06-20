@@ -1,0 +1,14 @@
+-r requirements.txt
+
+# Optional notebook, legacy causal-inference, and dataset-refresh stack
+matplotlib>=3.10,<3.11
+seaborn>=0.13,<0.14
+statsmodels>=0.14,<0.15
+networkx>=3.6,<3.7
+requests>=2.34,<3
+pyreadr>=0.5,<0.6
+jupyter>=1.1,<2
+ipykernel>=7.2,<8
+dowhy>=0.14,<0.15
+econml>=0.16,<0.17
+shap>=0.48,<0.49
