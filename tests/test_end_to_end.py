@@ -229,3 +229,40 @@ def test_optimizer_input_change_invalidates_stale_recommendation():
     state["optimizer_result"] = preserved_result
     assert not module._sync_optimizer_signature(state, signature)
     assert state["optimizer_result"] is preserved_result
+
+
+def test_optimizer_signature_tracks_analysis_and_normalizes_bound_order():
+    module = _load_app_module()
+    forward = {"search": (10.0, 100.0), "social": (5.0, 80.0)}
+    reversed_order = {"social": (5.0, 80.0), "search": (10.0, 100.0)}
+
+    signature = module._optimizer_input_signature("analysis-v1", 120.0, forward)
+
+    assert signature == module._optimizer_input_signature(
+        "analysis-v1", 120.0, reversed_order
+    )
+    assert signature != module._optimizer_input_signature(
+        "analysis-v2", 120.0, forward
+    )
+
+
+def test_invalid_bound_rerun_clears_previous_optimizer_result():
+    module = _load_app_module()
+    valid_bounds = {"search": (10.0, 100.0), "social": (5.0, 80.0)}
+    invalid_bounds = {"search": (110.0, 100.0), "social": (5.0, 80.0)}
+    state: dict[str, object] = {
+        "optimizer_result": object(),
+        "optimizer_signature": module._optimizer_input_signature(
+            "analysis-v1", 120.0, valid_bounds
+        ),
+    }
+
+    errors, _ = module._optimizer_validation(120.0, invalid_bounds, valid_bounds)
+    changed = module._sync_optimizer_signature(
+        state,
+        module._optimizer_input_signature("analysis-v1", 120.0, invalid_bounds),
+    )
+
+    assert errors
+    assert changed
+    assert state["optimizer_result"] is None
