@@ -1,3 +1,4 @@
+import hashlib
 import io
 import sys
 from dataclasses import dataclass
@@ -245,7 +246,7 @@ def _build_analysis_bundle(raw: pd.DataFrame, mapping: DataMapping, transforms: 
 
 
 @st.cache_data(show_spinner=False)
-def _cached_analysis_bundle(
+def _cached_demo_analysis_bundle(
     raw: pd.DataFrame,
     mapping_payload: tuple[str, str, tuple[str, ...], tuple[str, ...]],
     transform_payload: tuple[tuple[str, float, float, float], ...],
@@ -255,6 +256,113 @@ def _cached_analysis_bundle(
     transforms = _deserialize_transforms(transform_payload)
     config = _deserialize_config(config_payload)
     return _build_analysis_bundle(raw.copy(), mapping, transforms, config)
+
+
+def _fingerprint_bytes(payload: bytes) -> str:
+    """Return a stable, non-reversible identifier for in-memory source data."""
+    return hashlib.sha256(payload).hexdigest()
+
+
+def _mapping_signature(mapping: DataMapping) -> str:
+    return repr(_serialize_mapping(mapping))
+
+
+def _analysis_cache_key(
+    source_fingerprint: str,
+    mapping: DataMapping,
+    transforms: dict[str, ChannelTransform],
+    config: MMMConfig,
+) -> str:
+    payload = repr(
+        (
+            source_fingerprint,
+            _serialize_mapping(mapping),
+            _serialize_transforms(transforms),
+            _serialize_config(config),
+        )
+    ).encode("utf-8")
+    return _fingerprint_bytes(payload)
+
+
+def _clear_results(state) -> None:
+    state["analysis"] = None
+    state["analysis_signature"] = None
+    state["optimizer_result"] = None
+    state["optimizer_signature"] = None
+
+
+def _sync_source_state(
+    state,
+    raw: pd.DataFrame,
+    *,
+    source_kind: str,
+    source_label: str,
+    source_fingerprint: str,
+) -> bool:
+    """Update source state only when the underlying content changes."""
+    unchanged = (
+        state.get("source_kind") == source_kind
+        and state.get("source_fingerprint") == source_fingerprint
+    )
+    if unchanged:
+        return False
+
+    mapping = _default_mapping_for_frame(raw)
+    state["raw_data"] = raw.copy()
+    state["source_kind"] = source_kind
+    state["source_label"] = source_label
+    state["data_source"] = source_label
+    state["source_fingerprint"] = source_fingerprint
+    state["mapping_selection"] = mapping
+    state["mapping_signature"] = _mapping_signature(mapping)
+    state["uploaded_analysis_cache"] = {}
+    _clear_results(state)
+    return True
+
+
+def _sync_mapping_state(state, mapping: DataMapping) -> bool:
+    signature = _mapping_signature(mapping)
+    if state.get("mapping_signature") == signature:
+        state["mapping_selection"] = mapping
+        return False
+    state["mapping_selection"] = mapping
+    state["mapping_signature"] = signature
+    _clear_results(state)
+    return True
+
+
+def _get_or_create_analysis(
+    state,
+    raw: pd.DataFrame,
+    *,
+    source_kind: str,
+    source_fingerprint: str,
+    mapping: DataMapping,
+    transforms: dict[str, ChannelTransform],
+    config: MMMConfig,
+) -> AnalysisBundle:
+    key = _analysis_cache_key(source_fingerprint, mapping, transforms, config)
+    if source_kind == "upload":
+        cache = state.setdefault("uploaded_analysis_cache", {})
+        if key not in cache:
+            cache[key] = _build_analysis_bundle(raw.copy(), mapping, transforms, config)
+        return cache[key]
+
+    return _cached_demo_analysis_bundle(
+        raw,
+        _serialize_mapping(mapping),
+        _serialize_transforms(transforms),
+        _serialize_config(config),
+    )
+
+
+def _training_gate_state(prepared: PreparedData) -> dict[str, object]:
+    if prepared.can_train:
+        return {"disabled": False, "help": "Validation passed; training is available."}
+    return {
+        "disabled": True,
+        "help": "Training is disabled until validation errors are resolved.",
+    }
 
 
 def run_demo_analysis(bootstrap_samples: int = 30) -> AnalysisBundle:
@@ -299,14 +407,19 @@ def _safe_index(options: list[str], value: str) -> int:
 
 def _ensure_session_defaults() -> None:
     if "raw_data" not in st.session_state:
-        st.session_state.raw_data = _load_demo_frame()
-        st.session_state.data_source = "Bundled demo dataset"
-    if "mapping_selection" not in st.session_state:
-        st.session_state.mapping_selection = _default_mapping_for_frame(st.session_state.raw_data)
-    if "analysis" not in st.session_state:
-        st.session_state.analysis = None
-    if "optimizer_result" not in st.session_state:
-        st.session_state.optimizer_result = None
+        _sync_source_state(
+            st.session_state,
+            _load_demo_frame(),
+            source_kind="demo",
+            source_label="Bundled demo dataset",
+            source_fingerprint=_fingerprint_bytes(_demo_csv_bytes()),
+        )
+    st.session_state.setdefault("mapping_signature", _mapping_signature(st.session_state.mapping_selection))
+    st.session_state.setdefault("analysis", None)
+    st.session_state.setdefault("analysis_signature", None)
+    st.session_state.setdefault("optimizer_result", None)
+    st.session_state.setdefault("optimizer_signature", None)
+    st.session_state.setdefault("uploaded_analysis_cache", {})
 
 
 def _select_data_source() -> None:
@@ -318,12 +431,15 @@ def _select_data_source() -> None:
     action_col, download_col = st.columns([1, 1])
     with action_col:
         if st.button("Use bundled demo dataset", type="primary", width="stretch"):
-            st.session_state.raw_data = _load_demo_frame()
-            st.session_state.data_source = "Bundled demo dataset"
-            st.session_state.mapping_selection = _default_mapping_for_frame(st.session_state.raw_data)
-            st.session_state.analysis = None
-            st.session_state.optimizer_result = None
-            st.rerun()
+            changed = _sync_source_state(
+                st.session_state,
+                _load_demo_frame(),
+                source_kind="demo",
+                source_label="Bundled demo dataset",
+                source_fingerprint=_fingerprint_bytes(_demo_csv_bytes()),
+            )
+            if changed:
+                st.rerun()
     with download_col:
         st.download_button(
             "Download CSV template",
@@ -339,21 +455,25 @@ def _select_data_source() -> None:
         help="The file is read into memory for this session and is not persisted by the app.",
     )
     if uploaded_file is not None:
+        upload_bytes = uploaded_file.getvalue()
+        fingerprint = _fingerprint_bytes(upload_bytes)
         try:
-            parsed = pd.read_csv(io.BytesIO(uploaded_file.getvalue()))
+            parsed = pd.read_csv(io.BytesIO(upload_bytes))
         except Exception as exc:  # noqa: BLE001
             st.error("We couldn't read that file as a CSV. Please upload a valid comma-separated file with a header row.")
             with st.expander("Technical details"):
                 st.exception(exc)
         else:
-            st.session_state.raw_data = parsed
-            st.session_state.data_source = f"Uploaded file: {uploaded_file.name}"
-            st.session_state.mapping_selection = _default_mapping_for_frame(parsed)
-            st.session_state.analysis = None
-            st.session_state.optimizer_result = None
-            raw = parsed
+            _sync_source_state(
+                st.session_state,
+                parsed,
+                source_kind="upload",
+                source_label=f"Uploaded file: {uploaded_file.name}",
+                source_fingerprint=fingerprint,
+            )
+            raw = st.session_state.raw_data
 
-    st.caption(f"Current source: {st.session_state.data_source}")
+    st.caption(f"Current source: {st.session_state.source_label}")
     st.dataframe(raw.head(12), hide_index=True, width="stretch")
     st.caption(f"{len(raw):,} rows × {len(raw.columns):,} columns")
 
@@ -399,7 +519,7 @@ def _mapping_editor(raw: pd.DataFrame) -> DataMapping | None:
         )
 
     mapping = DataMapping(date_col, outcome_col, tuple(channel_cols), tuple(control_cols))
-    st.session_state.mapping_selection = mapping
+    _sync_mapping_state(st.session_state, mapping)
     return mapping
 
 
@@ -436,13 +556,14 @@ def _render_model_tab(raw: pd.DataFrame, mapping: DataMapping | None) -> None:
     _render_validation_summary(prepared)
     st.markdown("---")
 
-    if not prepared.can_train:
+    gate = _training_gate_state(prepared)
+    if bool(gate["disabled"]):
         st.button(
             "Train model",
             type="primary",
             disabled=True,
             width="stretch",
-            help="Training is disabled until validation passes.",
+            help=str(gate["help"]),
         )
         return
 
@@ -515,16 +636,33 @@ def _render_model_tab(raw: pd.DataFrame, mapping: DataMapping | None) -> None:
         random_state=int(random_state),
     )
 
+    requested_signature = _analysis_cache_key(
+        st.session_state.source_fingerprint,
+        mapping,
+        transform_payload,
+        config,
+    )
+    if (
+        st.session_state.analysis is not None
+        and st.session_state.analysis_signature != requested_signature
+    ):
+        _clear_results(st.session_state)
+
     if st.button("Train model", type="primary", width="stretch"):
         with st.spinner("Training the model and estimating uncertainty..."):
             try:
-                st.session_state.analysis = _cached_analysis_bundle(
+                st.session_state.analysis = _get_or_create_analysis(
+                    st.session_state,
                     raw,
-                    _serialize_mapping(mapping),
-                    _serialize_transforms(transform_payload),
-                    _serialize_config(config),
+                    source_kind=st.session_state.source_kind,
+                    source_fingerprint=st.session_state.source_fingerprint,
+                    mapping=mapping,
+                    transforms=transform_payload,
+                    config=config,
                 )
+                st.session_state.analysis_signature = requested_signature
                 st.session_state.optimizer_result = None
+                st.session_state.optimizer_signature = None
             except Exception as exc:  # noqa: BLE001
                 st.session_state.analysis = None
                 st.error("Training could not complete with the current data and settings. Review the validation messages and advanced parameters, then try again.")
