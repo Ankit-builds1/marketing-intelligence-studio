@@ -208,3 +208,24 @@ def test_training_gate_blocks_invalid_input():
 
     assert gate["disabled"] is True
     assert "validation" in gate["help"].lower()
+
+
+def test_optimizer_input_change_invalidates_stale_recommendation():
+    module = _load_app_module()
+    state: dict[str, object] = {
+        "optimizer_result": object(),
+        "optimizer_signature": "old-signature",
+    }
+    bounds = {"search": (10.0, 100.0), "social": (5.0, 80.0)}
+    signature = module._optimizer_input_signature("analysis-v1", 120.0, bounds)
+
+    changed = module._sync_optimizer_signature(state, signature)
+
+    assert changed
+    assert state["optimizer_result"] is None
+    assert state["optimizer_signature"] == signature
+
+    preserved_result = object()
+    state["optimizer_result"] = preserved_result
+    assert not module._sync_optimizer_signature(state, signature)
+    assert state["optimizer_result"] is preserved_result

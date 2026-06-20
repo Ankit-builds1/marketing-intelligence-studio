@@ -331,6 +331,28 @@ def _sync_mapping_state(state, mapping: DataMapping) -> bool:
     return True
 
 
+def _optimizer_input_signature(
+    analysis_signature: str | None,
+    total_budget: float,
+    bounds: dict[str, tuple[float, float]],
+) -> str:
+    normalized_bounds = tuple(
+        (channel, float(lower), float(upper))
+        for channel, (lower, upper) in sorted(bounds.items())
+    )
+    return _fingerprint_bytes(
+        repr((analysis_signature, float(total_budget), normalized_bounds)).encode("utf-8")
+    )
+
+
+def _sync_optimizer_signature(state, signature: str) -> bool:
+    if state.get("optimizer_signature") == signature:
+        return False
+    state["optimizer_signature"] = signature
+    state["optimizer_result"] = None
+    return True
+
+
 def _get_or_create_analysis(
     state,
     raw: pd.DataFrame,
@@ -891,6 +913,12 @@ def _render_optimize_tab(analysis: AnalysisBundle | None) -> None:
             bounds[channel] = (float(lower), float(upper))
 
     errors, warnings = _optimizer_validation(total_budget, bounds, observed)
+    optimizer_signature = _optimizer_input_signature(
+        st.session_state.analysis_signature,
+        float(total_budget),
+        bounds,
+    )
+    _sync_optimizer_signature(st.session_state, optimizer_signature)
     for error in errors:
         st.error(error)
     for warning in warnings:
@@ -899,6 +927,7 @@ def _render_optimize_tab(analysis: AnalysisBundle | None) -> None:
     if st.button("Optimize allocation", type="primary", disabled=bool(errors), width="stretch"):
         response = _response_functions(analysis.model)
         st.session_state.optimizer_result = optimize_allocation(response, float(total_budget), bounds, current)
+        st.session_state.optimizer_signature = optimizer_signature
 
     result: BudgetResult | None = st.session_state.optimizer_result
     if result is None:
