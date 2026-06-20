@@ -29,7 +29,7 @@ Many marketing dashboards stop at correlation or static attribution. This app is
 - it shows uncertainty and reliability warnings instead of overclaiming;
 - it turns model output into a concrete budget-allocation decision.
 
-The repo started as a broader causal-inference/MMM exploration. The current deployed product surface is the Streamlit app in `app/budget_optimizer_app.py`, which uses a lean, reproducible MMM workflow suitable for portfolio review and free-tier hosting.
+The repo started as a broader causal-inference/MMM exploration. The current deployable app surface is the Streamlit app in `app/budget_optimizer_app.py`, which uses a lean, reproducible MMM workflow suitable for portfolio review and free-tier hosting.
 
 ## Product workflow
 
@@ -135,7 +135,7 @@ The automated suite covers validation, transformations, model behavior, reportin
 
 ### Hugging Face Spaces
 
-Hugging Face's current guidance is to use a Docker Space for Streamlit deployments. This repository is prepared for that shape with:
+This repository is configured as a Docker Space so Streamlit can run on the declared port with a reproducible container:
 
 - a valid README YAML header using `sdk: docker`;
 - a minimal `Dockerfile`;
