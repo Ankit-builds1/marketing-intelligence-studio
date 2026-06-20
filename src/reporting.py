@@ -184,9 +184,13 @@ def tables_as_zip(tables: Mapping[str, pd.DataFrame]) -> bytes:
     buffer = BytesIO()
     used_names: set[str] = set()
     fixed_timestamp = (2024, 1, 1, 0, 0, 0)
+    ordered_tables = sorted(
+        tables.items(),
+        key=lambda item: (_sanitize_entry_name(item[0]), str(item[0])),
+    )
 
     with ZipFile(buffer, "w", compression=ZIP_DEFLATED) as archive:
-        for original_name, frame in tables.items():
+        for original_name, frame in ordered_tables:
             base_name = _sanitize_entry_name(original_name)
             entry_name = f"{base_name}.csv"
             suffix = 1

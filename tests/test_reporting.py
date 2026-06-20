@@ -70,3 +70,22 @@ def test_tables_as_zip_sanitizes_entry_names_and_resolves_collisions() -> None:
         assert name == name.rsplit("/", 1)[-1]
         assert "\\" not in name
         assert ".." not in name
+
+
+def test_tables_as_zip_is_byte_identical_for_reversed_insertion_order() -> None:
+    forward = tables_as_zip(
+        {
+            "../summary": pd.DataFrame({"x": [1]}),
+            "summary": pd.DataFrame({"x": [2]}),
+            "nested/../summary": pd.DataFrame({"x": [3]}),
+        }
+    )
+    reversed_order = tables_as_zip(
+        {
+            "nested/../summary": pd.DataFrame({"x": [3]}),
+            "summary": pd.DataFrame({"x": [2]}),
+            "../summary": pd.DataFrame({"x": [1]}),
+        }
+    )
+
+    assert forward == reversed_order

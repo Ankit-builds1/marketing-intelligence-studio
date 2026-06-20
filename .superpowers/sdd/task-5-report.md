@@ -21,3 +21,9 @@ Verification:
 
 Notes:
 - No PDF dependencies were added.
+
+Review fix evidence:
+- Regression added for reversed insertion order byte-for-byte equality in `tests/test_reporting.py`.
+- Focused verification: `D:\CausalInference_MMM\venv\Scripts\python.exe -m pytest tests\test_reporting.py -v -p no:cacheprovider`
+- Full verification: `D:\CausalInference_MMM\venv\Scripts\python.exe -m pytest -p no:cacheprovider`
+- Result: all 35 tests passed.
