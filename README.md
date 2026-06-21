@@ -3,8 +3,9 @@ title: Marketing Intelligence Studio
 emoji: 📈
 colorFrom: indigo
 colorTo: blue
-sdk: docker
-app_port: 7860
+sdk: gradio
+sdk_version: 5.49.1
+app_file: app/gradio_app.py
 pinned: false
 short_description: Recruiter-ready marketing mix modeling app with validation, uncertainty, and budget optimization.
 tags:
@@ -18,7 +19,7 @@ tags:
 
 A recruiter-friendly marketing mix modeling application that turns weekly spend data into a guided workflow: validate the dataset, fit an interpretable model, inspect reliability and ROI, optimize a constrained budget, and export a lightweight executive report.
 
-Live demo: deployment pending. The repository is prepared for a Hugging Face Docker Space, but no public URL is published yet.
+Live demo: deployment pending. The repository is prepared for a native Hugging Face Gradio Space, but no public URL is published yet.
 
 ## Why this project exists
 
@@ -78,7 +79,8 @@ This application does not claim that arbitrary observational data proves causal 
 
 | File | Responsibility |
 | --- | --- |
-| `app/budget_optimizer_app.py` | Five-step Streamlit experience, session state, uploads, charts, and exports |
+| `app/gradio_app.py` | Native Hugging Face Space interface for upload, analysis, optimization, and downloads |
+| `app/budget_optimizer_app.py` | Five-step Streamlit interface for local use |
 | `src/data_validation.py` | Schema mapping, weekly preparation, blocking errors, and warnings |
 | `src/transformations.py` | Geometric adstock, Hill saturation, trend, and seasonality features |
 | `src/mmm_model.py` | Holdout split, constrained fit, reliability scoring, bootstrap intervals, contributions, and ROI |
@@ -103,13 +105,19 @@ This application does not claim that arbitrary observational data proves causal 
 
 ## Local setup
 
-### App workflow
+### Native Gradio interface (same interface used by Hugging Face)
 
 ```powershell
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 python -m pip install --upgrade pip
 python -m pip install -r requirements.txt
+python app/gradio_app.py
+```
+
+The original five-step Streamlit interface also remains available locally:
+
+```powershell
 python -m streamlit run app/budget_optimizer_app.py
 ```
 
@@ -129,52 +137,44 @@ python -m pytest tests -q
 python -m compileall app src tests
 ```
 
-The automated suite covers validation, transformations, model behavior, reporting, budget optimization, and Streamlit end-to-end smoke coverage.
+The automated suite covers validation, transformations, model behavior, reporting, budget optimization, the native Gradio service layer, and Streamlit end-to-end smoke coverage.
 
 ## Deployment
 
 ### Hugging Face Spaces
 
-This repository is configured as a Docker Space so Streamlit can run on the declared port with a reproducible container:
+This repository is configured as a native Gradio Space, so Hugging Face installs the Python requirements and launches the declared app directly:
 
-- a valid README YAML header using `sdk: docker`;
-- a minimal `Dockerfile`;
-- a tracked `.streamlit/config.toml`;
+- a valid README YAML header using `sdk: gradio`;
+- `app_file: app/gradio_app.py`;
+- a tested Gradio version declared in the Space metadata;
 - lean runtime dependencies in `requirements.txt`.
 
 Suggested deployment flow:
 
-1. Create a new Hugging Face Space with the Docker SDK.
+1. Create a new Hugging Face Space with the Gradio SDK.
 2. Push this repository contents to that Space.
-3. Let the Space build the included `Dockerfile`.
-4. Confirm the container starts the Streamlit app on port `7860`.
+3. Hugging Face installs `requirements.txt` and launches `app/gradio_app.py`.
+4. Open the Space and run the bundled demo before adding its URL to your resume.
 
 No public deployment URL is included here because deployment has not been published yet.
 
-### Local Docker smoke
-
-```powershell
-docker build -t marketing-intelligence-studio .
-docker run --rm -p 7860:7860 marketing-intelligence-studio
-```
-
 ## Accurate resume bullets
 
-- Built a five-step Streamlit marketing intelligence app that accepts weekly CSV uploads, validates schema and data quality, trains an interpretable MMM, and exports executive-ready outputs.
+- Built and packaged a native Gradio marketing intelligence app for Hugging Face Spaces that accepts CSV uploads, validates data quality, trains an interpretable MMM, and exports executive-ready outputs; retained a five-step Streamlit interface for local analysis.
 - Implemented geometric adstock, Hill saturation, time-based holdout evaluation, moving-block bootstrap uncertainty, modeled ROI, and constrained budget optimization in a reusable Python analysis pipeline.
-- Packaged the project for portfolio review with automated tests, session-local privacy handling, lean runtime dependencies, and Docker-based Hugging Face Spaces readiness.
+- Packaged the project for portfolio review with automated tests, session-local privacy handling, lean runtime dependencies, and native Gradio deployment on Hugging Face Spaces.
 
 ## Screenshots
 
 Deployment is still pending, so the README intentionally does not claim live screenshots from a published Space yet. Recommended captures to add before public launch:
 
-- Data tab with the bundled demo dataset loaded
-- Validation tab showing a pass state and actionable warning state
-- Results tab with actual-vs-modeled fit, contribution, and ROI charts
-- Optimize & Export tab with budget-conserving allocation output
+- Gradio Data & Mapping tab with the bundled demo loaded
+- Model Results tab with actual-vs-modeled fit, contribution, ROI, and response curves
+- Budget & Downloads tab with a budget-conserving recommendation and report files
 
 ## Repository notes
 
 - `requirements.txt` is intentionally lean for the app and test surface.
 - `requirements-notebook.txt` keeps the optional notebook and legacy causal-inference stack available.
-- `Dockerfile` is included because Docker is the current Hugging Face deployment path for Streamlit Spaces.
+- `app/gradio_app.py` is the native Hugging Face entry point; no container runtime or local virtualization is required.

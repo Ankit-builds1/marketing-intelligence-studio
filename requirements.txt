@@ -4,4 +4,5 @@ scipy>=1.15,<1.16
 scikit-learn>=1.6,<1.7
 plotly>=6.7,<6.8
 streamlit>=1.57,<1.58
+gradio>=5.49,<6
 pytest>=8.4,<9
