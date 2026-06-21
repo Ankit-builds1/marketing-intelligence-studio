@@ -186,6 +186,7 @@ def optimize_allocation(
             method="SLSQP",
             bounds=[bounds_snapshot[name] for name in channels],
             constraints={"type": "eq", "fun": lambda x: float(np.sum(x) - total_budget)},
+            options={"maxiter": 1_000, "ftol": 1e-9},
         )
     except _NonFiniteResponseError as exc:
         return BudgetResult(False, str(exc), {}, current_prediction, float("nan"))
