@@ -7,7 +7,7 @@ sdk: gradio
 sdk_version: 5.49.1
 app_file: app/gradio_app.py
 pinned: false
-short_description: Recruiter-ready marketing mix modeling app with validation, uncertainty, and budget optimization.
+short_description: Causal MMM analysis and marketing budget optimization.
 tags:
   - streamlit
   - marketing-mix-modeling
