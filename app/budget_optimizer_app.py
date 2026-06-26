@@ -14,6 +14,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+from src.adaptive_service import AdaptiveDataset, build_adaptive_dataset
 from src.budget_optimizer import BudgetResult, optimize_allocation
 from src.data_validation import DataMapping, PreparedData, ValidationIssue, prepare_and_validate
 from src.mmm_model import MMMConfig, MMMResult, fit_mmm
@@ -45,6 +46,60 @@ class AnalysisBundle:
     model: MMMResult
     report_html: str
     tables_zip: bytes
+
+
+def _apply_brand_theme() -> None:
+    st.markdown(
+        """
+        <style>
+        .stApp {
+            background:
+                radial-gradient(circle at top left, rgba(124, 58, 237, .18), transparent 34rem),
+                linear-gradient(180deg, #f8fbff 0%, #eef4ff 45%, #f8fafc 100%);
+        }
+        .hero-card {
+            padding: 2rem;
+            border-radius: 28px;
+            color: white;
+            background: linear-gradient(135deg, #111827 0%, #312e81 48%, #7c3aed 100%);
+            box-shadow: 0 22px 70px rgba(49, 46, 129, .25);
+            margin-bottom: 1.2rem;
+        }
+        .hero-card h1 { margin: 0 0 .5rem 0; font-size: 3rem; }
+        .hero-card p { color: #dbeafe; max-width: 980px; font-size: 1.05rem; }
+        .status-card {
+            padding: 1rem 1.1rem;
+            border-radius: 18px;
+            background: rgba(255,255,255,.82);
+            border: 1px solid rgba(99,102,241,.18);
+            box-shadow: 0 12px 34px rgba(30, 41, 59, .08);
+        }
+        div[data-testid="stMetric"] {
+            background: rgba(255,255,255,.75);
+            border: 1px solid rgba(99,102,241,.16);
+            border-radius: 18px;
+            padding: .9rem;
+        }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def _hero() -> None:
+    st.markdown(
+        """
+        <div class="hero-card">
+            <h1>Marketing Intelligence Studio</h1>
+            <p>
+                Upload messy real-world marketing data, let the app detect the structure,
+                prepare it for analysis, train a lightweight MMM, and export recruiter-ready
+                insights with clear reliability warnings.
+            </p>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
 
 
 def _load_demo_frame() -> pd.DataFrame:
@@ -219,8 +274,34 @@ def _build_export_tables(prepared: PreparedData, model: MMMResult) -> dict[str, 
     }
 
 
-def _build_analysis_bundle(raw: pd.DataFrame, mapping: DataMapping, transforms: dict[str, ChannelTransform], config: MMMConfig) -> AnalysisBundle:
-    prepared = prepare_and_validate(raw, mapping)
+def _current_target_cadence() -> str:
+    return str(st.session_state.get("target_cadence", "auto"))
+
+
+def _current_min_rows() -> int | None:
+    value = st.session_state.get("minimum_rows")
+    return int(value) if value else None
+
+
+def _validate_for_current_source(raw: pd.DataFrame, mapping: DataMapping) -> PreparedData:
+    return prepare_and_validate(
+        raw,
+        mapping,
+        min_rows=_current_min_rows(),
+        target_cadence=_current_target_cadence(),
+    )
+
+
+def _build_analysis_bundle(
+    raw: pd.DataFrame,
+    mapping: DataMapping,
+    transforms: dict[str, ChannelTransform],
+    config: MMMConfig,
+    *,
+    min_rows: int | None = None,
+    target_cadence: str = "auto",
+) -> AnalysisBundle:
+    prepared = prepare_and_validate(raw, mapping, min_rows=min_rows, target_cadence=target_cadence)
     if not prepared.can_train:
         messages = "; ".join(_issue_messages(prepared.issues))
         raise ValueError(f"Training is blocked until validation issues are resolved: {messages}")
@@ -307,8 +388,14 @@ def _sync_source_state(
     if unchanged:
         return False
 
-    mapping = _default_mapping_for_frame(raw)
-    state["raw_data"] = raw.copy()
+    adaptive = build_adaptive_dataset(raw)
+    mapping = adaptive.mapping if adaptive.mapping.date_col else _default_mapping_for_frame(raw)
+    analysis_frame = adaptive.analysis_frame if not adaptive.analysis_frame.empty else raw
+    state["original_data"] = raw.copy()
+    state["raw_data"] = analysis_frame.copy()
+    state["adaptive_dataset"] = adaptive
+    state["target_cadence"] = adaptive.prepared.cadence
+    state["minimum_rows"] = adaptive.prepared.minimum_rows
     state["source_kind"] = source_kind
     state["source_label"] = source_label
     state["data_source"] = source_label
@@ -362,12 +449,21 @@ def _get_or_create_analysis(
     mapping: DataMapping,
     transforms: dict[str, ChannelTransform],
     config: MMMConfig,
+    min_rows: int | None = None,
+    target_cadence: str = "auto",
 ) -> AnalysisBundle:
     key = _analysis_cache_key(source_fingerprint, mapping, transforms, config)
     if source_kind == "upload":
         cache = state.setdefault("uploaded_analysis_cache", {})
         if key not in cache:
-            cache[key] = _build_analysis_bundle(raw.copy(), mapping, transforms, config)
+            cache[key] = _build_analysis_bundle(
+                raw.copy(),
+                mapping,
+                transforms,
+                config,
+                min_rows=min_rows,
+                target_cadence=target_cadence,
+            )
         return cache[key]
 
     return _cached_demo_analysis_bundle(
@@ -495,7 +591,23 @@ def _select_data_source() -> None:
             )
             raw = st.session_state.raw_data
 
+    adaptive: AdaptiveDataset | None = st.session_state.get("adaptive_dataset")
     st.caption(f"Current source: {st.session_state.source_label}")
+    if adaptive is not None:
+        status_cols = st.columns(4)
+        status_cols[0].metric("Detected format", adaptive.detection.family.replace("_", " ").title())
+        status_cols[1].metric("Confidence", f"{adaptive.detection.confidence:.0%}")
+        status_cols[2].metric("Cadence", adaptive.prepared.cadence.title())
+        status_cols[3].metric("Reliability", adaptive.reliability.label)
+        with st.expander("What the app detected and prepared", expanded=True):
+            for message in adaptive.messages:
+                st.write(f"• {message}")
+            if adaptive.is_transformed:
+                st.success("Your upload was converted into a modeling-ready channel table.")
+            elif adaptive.detection.family == "wide_mmm":
+                st.success("Your upload already looks like a marketing-mix table.")
+            else:
+                st.warning("This file needs clearer time, outcome, spend, or channel fields before full modeling.")
     st.dataframe(raw.head(12), hide_index=True, width="stretch")
     st.caption(f"{len(raw):,} rows × {len(raw.columns):,} columns")
 
@@ -506,7 +618,7 @@ def _mapping_editor(raw: pd.DataFrame) -> DataMapping | None:
     numeric_columns = list(raw.select_dtypes(include=["number"]).columns)
 
     if not all_columns or len(numeric_columns) < 3:
-        st.error("Upload a CSV with at least one date column, one outcome column, and two numeric media columns.")
+        st.error("Upload a CSV with a time field, outcome field, and usable marketing spend/channel fields.")
         return None
 
     left, right = st.columns(2)
@@ -515,7 +627,7 @@ def _mapping_editor(raw: pd.DataFrame) -> DataMapping | None:
             "Date column",
             all_columns,
             index=_safe_index(all_columns, default_mapping.date_col),
-            help="Choose the weekly date column, or a date column that can be aggregated to weeks.",
+            help="Choose the time column. Daily, weekly, monthly, and transformable event uploads are supported.",
         )
         outcome_col = st.selectbox(
             "Outcome column",
@@ -529,7 +641,7 @@ def _mapping_editor(raw: pd.DataFrame) -> DataMapping | None:
             "Media spend columns",
             numeric_columns,
             default=default_channels,
-            help="Select at least two non-negative media spend columns.",
+            help="Select non-negative media spend columns. Two or more unlock full budget optimization.",
         )
         control_options = [column for column in numeric_columns if column not in {outcome_col, *channel_cols}]
         default_controls = [column for column in default_mapping.control_cols if column in control_options]
@@ -550,7 +662,7 @@ def _render_validation_summary(prepared: PreparedData) -> None:
     warning_issues = [issue for issue in prepared.issues if issue.severity == "warning"]
 
     metric_columns = st.columns(4)
-    metric_columns[0].metric("Usable weekly rows", f"{len(prepared.frame):,}")
+    metric_columns[0].metric(f"Usable {prepared.cadence} rows", f"{len(prepared.frame):,}")
     metric_columns[1].metric("Selected media channels", len(prepared.mapping.channel_cols))
     metric_columns[2].metric("Blocking issues", len(error_issues))
     metric_columns[3].metric("Warnings", len(warning_issues))
@@ -574,7 +686,7 @@ def _render_model_tab(raw: pd.DataFrame, mapping: DataMapping | None) -> None:
         st.info("Choose a dataset and map the required columns in the Validate step.")
         return
 
-    prepared = prepare_and_validate(raw, mapping)
+    prepared = _validate_for_current_source(raw, mapping)
     _render_validation_summary(prepared)
     st.markdown("---")
 
@@ -681,6 +793,8 @@ def _render_model_tab(raw: pd.DataFrame, mapping: DataMapping | None) -> None:
                     mapping=mapping,
                     transforms=transform_payload,
                     config=config,
+                    min_rows=_current_min_rows(),
+                    target_cadence=_current_target_cadence(),
                 )
                 st.session_state.analysis_signature = requested_signature
                 st.session_state.optimizer_result = None
@@ -971,12 +1085,13 @@ def main() -> None:
         page_icon="📈",
         layout="wide",
     )
+    _apply_brand_theme()
     _ensure_session_defaults()
 
-    st.title("Marketing Intelligence Studio")
+    _hero()
     st.caption(
-        "A five-step marketing mix workflow for demo data or a session-local CSV upload. "
-        "Outputs are framed as modeled estimates with uncertainty, not guaranteed causal truth."
+        "A five-step marketing intelligence workflow for demo data or session-local CSV uploads. "
+        "Outputs are modeled estimates with uncertainty, not guaranteed causal truth."
     )
 
     tabs = st.tabs(TAB_LABELS)
@@ -989,7 +1104,7 @@ def main() -> None:
     with tabs[1]:
         mapping = _mapping_editor(raw)
         if mapping is not None:
-            prepared = prepare_and_validate(raw, mapping)
+            prepared = _validate_for_current_source(raw, mapping)
             _render_validation_summary(prepared)
         else:
             prepared = None

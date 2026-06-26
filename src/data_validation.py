@@ -24,6 +24,8 @@ class PreparedData:
     frame: pd.DataFrame
     mapping: DataMapping
     issues: list[ValidationIssue]
+    cadence: str = "weekly"
+    minimum_rows: int = 52
 
     @property
     def can_train(self) -> bool:
@@ -68,8 +70,13 @@ def _aggregate_to_weekly(frame: pd.DataFrame, mapping: DataMapping) -> pd.DataFr
 
 
 def prepare_and_validate(
-    raw: pd.DataFrame, mapping: DataMapping, min_rows: int = 52
+    raw: pd.DataFrame, mapping: DataMapping, min_rows: int | None = None, target_cadence: str = "auto"
 ) -> PreparedData:
+    cadence_minimums = {"daily": 28, "weekly": 52, "monthly": 24}
+    requested_cadence = target_cadence.lower()
+    if requested_cadence not in {"auto", "daily", "weekly", "monthly"}:
+        requested_cadence = "auto"
+    effective_min_rows = int(min_rows or cadence_minimums.get(requested_cadence, 52))
     selected = (
         mapping.date_col,
         mapping.outcome_col,
@@ -89,6 +96,7 @@ def prepare_and_validate(
                     "Each role must use a different column.",
                 )
             ],
+            minimum_rows=effective_min_rows,
         )
 
     if len(mapping.channel_cols) < 2:
@@ -109,7 +117,7 @@ def prepare_and_validate(
                 f"Missing mapped columns: {', '.join(missing)}",
             )
         )
-        return PreparedData(pd.DataFrame(), mapping, issues)
+        return PreparedData(pd.DataFrame(), mapping, issues, minimum_rows=effective_min_rows)
 
     frame = raw.loc[:, selected].copy()
 
@@ -159,7 +167,14 @@ def prepare_and_validate(
     frame = frame.sort_values([mapping.date_col, "_source_order"])
 
     cadence = _cadence_kind(frame[mapping.date_col])
-    if cadence == "subweekly":
+    output_cadence = "weekly"
+    if requested_cadence == "daily":
+        frame = frame.drop_duplicates(subset=[mapping.date_col], keep="last")
+        output_cadence = "daily"
+    elif requested_cadence == "monthly":
+        frame = frame.drop_duplicates(subset=[mapping.date_col], keep="last")
+        output_cadence = "monthly"
+    elif cadence == "subweekly":
         frame = _aggregate_to_weekly(frame, mapping)
     elif cadence == "weekly":
         frame = frame.drop_duplicates(subset=[mapping.date_col], keep="last")
@@ -171,17 +186,17 @@ def prepare_and_validate(
                 "Cadence cannot be reliably converted to weekly periods.",
             )
         )
-        return PreparedData(pd.DataFrame(), mapping, issues)
+        return PreparedData(pd.DataFrame(), mapping, issues, cadence=output_cadence, minimum_rows=effective_min_rows)
 
-    if len(frame) < min_rows:
+    if len(frame) < effective_min_rows:
         issues.append(
             ValidationIssue(
                 "error",
                 "too_few_rows",
-                f"At least {min_rows} usable weekly rows are required.",
+                f"At least {effective_min_rows} usable {output_cadence} rows are required.",
             )
         )
-    elif len(frame) < 104:
+    elif output_cadence == "weekly" and len(frame) < 104:
         issues.append(
             ValidationIssue(
                 "warning",
@@ -226,4 +241,4 @@ def prepare_and_validate(
     frame = frame.drop(columns=["_source_order"], errors="ignore")
     frame = frame.rename(columns=rename).reset_index(drop=True)
 
-    return PreparedData(frame, mapping, issues)
+    return PreparedData(frame, mapping, issues, cadence=output_cadence, minimum_rows=effective_min_rows)
